@@ -1,0 +1,8 @@
+# Ignore environment variable files
+.env
+
+# Ignore operating system-specific files
+*.Zone.Identifier
+
+# Ignore build output directory
+out/
