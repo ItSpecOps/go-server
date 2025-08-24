@@ -1,27 +1,21 @@
 package main
-import _ "github.com/lib/pq"
-// internal imports
+
 import (
-	"github.com/ItSpecOps/go-server/internal/database"
-	"github.com/ItSpecOps/go-server/internal/auth"
-)
-// external imports
-import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"net/http"
-	"strings"
-	"sync/atomic"
 	"os"
+	"sync/atomic"
+
+	"github.com/ItSpecOps/go-server/internal/database"
 	"github.com/joho/godotenv"
-	"database/sql"
-	"github.com/google/uuid"
+	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
-	db *database.Queries
-	platform string
+	db             *database.Queries
+	platform       string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -34,10 +28,10 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<html>
-  <body>
-    <h1>Welcome, Chirpy Admin</h1>
-    <p>Chirpy has been visited %d times!</p>
-  </body>
+  <body>
+    <h1>Welcome, Chirpy Admin</h1>
+    <p>Chirpy has been visited %d times!</p>
+  </body>
 </html>`, cfg.fileserverHits.Load())
 }
 
@@ -62,132 +56,6 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req createUserParams
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
-		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
-		return
-	}
-	dbUser, err := cfg.db.CreateUser(r.Context(), req.Email)
-	if err != nil {
-		fmt.Printf("CreateUser error: %v\n", err) // Log the actual error
-		http.Error(w, `{"error":"could not create user"}`, http.StatusInternalServerError)
-		return
-	}
-	resp := User{
-		ID:        uuid.MustParse(dbUser.ID),
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
-		Email:     dbUser.Email,
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
-	dbChirps, err := cfg.db.GetChirps(r.Context())
-	if err != nil {
-		fmt.Printf("GetChirps error: %v\n", err) // Log the actual error
-		http.Error(w, `{"error":"could not get chirps"}`, http.StatusInternalServerError)
-		return
-	}
-	var resp []Chirp
-	for _, dbChirp := range dbChirps {
-		chirp := Chirp{
-			ID:        uuid.MustParse(dbChirp.ID),
-			CreatedAt: dbChirp.CreatedAt,
-			UpdatedAt: dbChirp.UpdatedAt,
-			Body:     dbChirp.Body,
-			UserID:  uuid.MustParse(dbChirp.UserID),
-		}
-		resp = append(resp, chirp)
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (cfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
-	chirpIDString := r.PathValue("chirpID")
-	chirpID, err := uuid.Parse(chirpIDString)
-	if err != nil {
-		http.Error(w, `{"error":"invalid chirp id"}`, http.StatusBadRequest)
-		return
-	}
-
-	dbChirp, err := cfg.db.GetChirp(r.Context(), chirpID.String())
-	if err != nil {
-		http.Error(w, `{"error":"chirp not found"}`, http.StatusNotFound)
-		return
-	}
-
-	resp := Chirp{
-		ID:        uuid.MustParse(dbChirp.ID),
-		CreatedAt: dbChirp.CreatedAt,
-		UpdatedAt: dbChirp.UpdatedAt,
-		Body:     dbChirp.Body,
-		UserID:  uuid.MustParse(dbChirp.UserID),
-	}
-
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
-	var req createChirpParams
-	type errorResponse struct {
-		Error string `json:"error"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" || req.Body == "" {
-		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
-		return
-	}
-	// Validate Chirp length
-	if len(req.Body) > 140 {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(errorResponse{Error: "Chirp is too long"})
-		return
-	}
-
-	// Profanity filter
-	profaneWords := []string{"kerfuffle", "sharbert", "fornax"}
-	words := strings.Split(req.Body, " ")
-	for i, word := range words {
-		for _, profane := range profaneWords {
-			if strings.EqualFold(word, profane) {
-				words[i] = "****"
-				break
-			}
-		}
-	}
-
-	cleaned := strings.Join(words, " ")
-
-	dbChirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
-		Body: cleaned,
-		UserID: req.UserID,
-	})
-	if err != nil {
-		fmt.Printf("CreateUser error: %v\n", err) // Log the actual error
-		http.Error(w, `{"error":"could not create chirp"}`, http.StatusInternalServerError)
-		return
-	}
-	resp := Chirp{
-		ID:        uuid.MustParse(dbChirp.ID),
-		CreatedAt: dbChirp.CreatedAt,
-		UpdatedAt: dbChirp.UpdatedAt,
-		Body:     dbChirp.Body,
-		UserID:  uuid.MustParse(dbChirp.UserID),
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
-}
-
 func main() {
 	// setup DB connection
 	godotenv.Load()
@@ -201,7 +69,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	apiCfg := &apiConfig{
-		db: queries,
+		db:       queries,
 		platform: platform,
 	}
 
@@ -219,17 +87,16 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
 
 	// Create chirp endpoint
-	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerChirpsCreate)
 
 	// Get chirps endpoint
-	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetChirps)
+	mux.HandleFunc("GET /api/chirps", apiCfg.handlerChirpsGet)
 
 	// Get chirp endpoint
-	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerChirpGet)
 
 	// Create user endpoint
-	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
-	
+	mux.HandleFunc("POST /api/users", apiCfg.handlerUsersCreate)
 
 	// Fileserver at /app/ with metrics middleware
 	fileserverHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
