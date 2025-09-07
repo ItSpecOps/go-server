@@ -15,5 +15,5 @@ type Chirp struct {
 
 type createChirpParams struct {
 	Body string `json:"body"`
-	UserID string `json:"user_id"`
+	UserID uuid.UUID `json:"user_id"`
 }

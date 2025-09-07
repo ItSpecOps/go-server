@@ -7,25 +7,40 @@ import (
 	"strings"
 
 	"github.com/ItSpecOps/go-server/internal/database"
+	"github.com/ItSpecOps/go-server/internal/auth"
 	"github.com/google/uuid"
 )
 
 
 func (cfg *apiConfig) handlerChirpsCreate(w http.ResponseWriter, r *http.Request) {
 	var req createChirpParams
-	type errorResponse struct {
-		Error string `json:"error"`
-	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" || req.Body == "" {
-		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "missing or malformed JWT", err)
 		return
 	}
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "invalid or expired JWT", err)
+		return
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters", err)
+		return
+	}
+
+
+	if userID == uuid.Nil {
+		respondWithError(w, http.StatusBadRequest, "invalid user_id", nil)
+		return
+	}
+
 	// Validate Chirp length
 	if len(req.Body) > 140 {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(errorResponse{Error: "Chirp is too long"})
+		respondWithError(w, http.StatusBadRequest, "chirp body exceeds 140 characters", nil)
 		return
 	}
 
@@ -45,7 +60,7 @@ func (cfg *apiConfig) handlerChirpsCreate(w http.ResponseWriter, r *http.Request
 
 	dbChirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   cleaned,
-		UserID: req.UserID,
+		UserID: userID,
 	})
 	if err != nil {
 		fmt.Printf("CreateUser error: %v\n", err) // Log the actual error
@@ -53,11 +68,11 @@ func (cfg *apiConfig) handlerChirpsCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	resp := Chirp{
-		ID:        uuid.MustParse(dbChirp.ID),
+		ID:        dbChirp.ID,
 		CreatedAt: dbChirp.CreatedAt,
 		UpdatedAt: dbChirp.UpdatedAt,
 		Body:      dbChirp.Body,
-		UserID:    uuid.MustParse(dbChirp.UserID),
+		UserID:    dbChirp.UserID,
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusCreated)

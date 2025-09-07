@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/google/uuid"
+	"github.com/ItSpecOps/go-server/internal/auth"
+	"github.com/ItSpecOps/go-server/internal/database"
 )
 
 
@@ -15,14 +16,24 @@ func (cfg *apiConfig) handlerUsersCreate(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
 	}
-	dbUser, err := cfg.db.CreateUser(r.Context(), req.Email)
+
+	hashedPassword, err := auth.HashPassword(req.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "could not hash password", err)
+		return
+	}
+
+	dbUser, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{
+		Email:          req.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err != nil {
 		fmt.Printf("CreateUser error: %v\n", err) // Log the actual error
 		http.Error(w, `{"error":"could not create user"}`, http.StatusInternalServerError)
 		return
 	}
 	resp := User{
-		ID:        uuid.MustParse(dbUser.ID),
+		ID:        dbUser.ID,
 		CreatedAt: dbUser.CreatedAt,
 		UpdatedAt: dbUser.UpdatedAt,
 		Email:     dbUser.Email,
